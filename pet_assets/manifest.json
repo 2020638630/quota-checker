@@ -1,0 +1,9 @@
+{
+  "front": "front.png",
+  "front_typing": "front_typing.png",
+  "side_l": ["side_l.png", "side_l_1.png"],
+  "side_r": ["side_r.png", "side_r_1.png"],
+  "back": "back.png",
+  "blink": ["blink_1.png", "blink_2.png"],
+  "sleep": ["sleep_1.png", "sleep_2.png"]
+}

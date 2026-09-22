@@ -1,0 +1,23 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local runtime data and credentials
+data/*.json
+
+# Environment / secrets
+.env
+.env.*
+
+# Logs and dumps
+*.log
+*.dmp
+
+# IDE / OS files
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Historical local-only patch helper
+tools/_patch6.py
