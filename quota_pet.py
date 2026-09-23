@@ -48,6 +48,201 @@ AUTO_SPAWN_DEFAULT = False    # 自动增殖默认关闭（调试时不会被刷
 MAX_PETS = 8                  # 增殖上限，避免刷爆屏幕
 TYPING_HOLD = 0.22            # 敲键后保持抬指姿势的时长
 TYPING_LOCK = 2.5             # 最后一次敲键后多久内锁住行为（不散步、不换姿势）
+KEY_POLL_MS = 40              # 轻量轮询，减少快速按键漏采样
+KEY_GLOW_HOLD = 0.16          # 松键后保留极短高亮，保证肉眼可见
+# front.png 内嵌键盘键帽在 215x215 舞台中的实际区域；坐标系沿用 keys_map.json。
+# 只覆盖键帽区，不把下方键盘外壳当成可点亮区域。
+EMBEDDED_KEYBOARD_BBOX = (68, 155, 80, 18)
+KEYBOARD_MAP_SIZE = (150.0, 58.0)
+KEY_GLOW_RGB = (86, 232, 255)
+INITIAL_MARGIN = 20           # 首次出生点距主屏工作区右下角的安全边距
+
+
+def _get_primary_work_area(widget):
+    """返回 Windows 主显示器工作区；失败时回退到 Tk 主屏尺寸。"""
+    fallback = (0, 0, widget.winfo_screenwidth(), widget.winfo_screenheight())
+    if sys.platform != "win32":
+        return fallback
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        rect = wintypes.RECT()
+        spi = ctypes.windll.user32.SystemParametersInfoW
+        spi.argtypes = [wintypes.UINT, wintypes.UINT,
+                        ctypes.POINTER(wintypes.RECT), wintypes.UINT]
+        spi.restype = wintypes.BOOL
+        if spi(0x0030, 0, ctypes.byref(rect), 0):  # SPI_GETWORKAREA
+            return (int(rect.left), int(rect.top),
+                    int(rect.right), int(rect.bottom))
+    except Exception:
+        pass
+    return fallback
+
+
+def _initial_position(work_area, width, height, margin=INITIAL_MARGIN):
+    """把首次窗口原点放在工作区右下角，并夹回工作区范围。"""
+    left, top, right, bottom = (int(v) for v in work_area)
+    width, height = max(0, int(width)), max(0, int(height))
+    margin = max(0, int(margin))
+    max_x = max(left, right - width)
+    max_y = max(top, bottom - height)
+    x = min(max(left, right - width - margin), max_x)
+    y = min(max(top, bottom - height - margin), max_y)
+    return x, y
+
+
+def _draw_embedded_key_glow(rgba, width, height, image_origin_x,
+                            bbox, key_rects, pressed_vks):
+    """在完整正面图的内嵌键盘区域画小范围不透明高亮。"""
+    if not pressed_vks:
+        return rgba
+    bx, by, bw, bh = bbox
+    map_w, map_h = KEYBOARD_MAP_SIZE
+    out = bytearray(rgba)
+    for key in key_rects:
+        if key.get("vk") not in pressed_vks:
+            continue
+        x0, y0, x1, y1 = key.get("rect", (0, 0, 0, 0))
+        left = max(0, int(round(image_origin_x + bx + x0 / map_w * bw)))
+        top = max(0, int(round(by + y0 / map_h * bh)))
+        right = min(width, int(round(image_origin_x + bx + x1 / map_w * bw)))
+        bottom = min(height, int(round(by + y1 / map_h * bh)))
+        if right <= left:
+            right = min(width, left + 1)
+        if bottom <= top:
+            bottom = min(height, top + 1)
+        for y in range(top, bottom):
+            for x in range(left, right):
+                i = (y * width + x) * 4
+                out[i:i + 4] = bytes((*KEY_GLOW_RGB, 255))
+    return out
+
+
+def _get_monitor_work_areas(widget):
+    """返回所有真实显示器工作区；Win32 查询失败时退回主屏工作区。"""
+    fallback = [_get_primary_work_area(widget)]
+    if sys.platform != "win32":
+        return fallback
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _MonitorInfo(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD),
+                        ("rcMonitor", wintypes.RECT),
+                        ("rcWork", wintypes.RECT),
+                        ("dwFlags", wintypes.DWORD)]
+
+        user32 = ctypes.windll.user32
+        get_monitor_info = user32.GetMonitorInfoW
+        get_monitor_info.argtypes = [ctypes.c_void_p, ctypes.POINTER(_MonitorInfo)]
+        get_monitor_info.restype = wintypes.BOOL
+
+        areas = []
+
+        def on_monitor(hmonitor, _hdc, _clip, _data):
+            info = _MonitorInfo()
+            info.cbSize = ctypes.sizeof(_MonitorInfo)
+            if get_monitor_info(hmonitor, ctypes.byref(info)):
+                rect = info.rcWork
+                area = (int(rect.left), int(rect.top),
+                        int(rect.right), int(rect.bottom))
+                if area[2] > area[0] and area[3] > area[1]:
+                    areas.append(area)
+            return True
+
+        enum_proc = ctypes.WINFUNCTYPE(
+            wintypes.BOOL, ctypes.c_void_p, ctypes.c_void_p,
+            ctypes.POINTER(wintypes.RECT), ctypes.c_void_p
+        )(on_monitor)
+        enum_monitors = user32.EnumDisplayMonitors
+        enum_monitors.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                                  ctypes.c_void_p, ctypes.c_void_p]
+        enum_monitors.restype = wintypes.BOOL
+        if enum_monitors(None, None, enum_proc, None) and areas:
+            return areas
+    except Exception:
+        pass
+    return fallback
+
+
+def _rect_contains(outer, inner):
+    """判断 inner 是否完整包含在 outer 内。"""
+    return (inner[0] >= outer[0] and inner[1] >= outer[1]
+            and inner[2] <= outer[2] and inner[3] <= outer[3])
+
+
+def _clamp_window_to_rect(x, y, width, height, rect):
+    """把窗口原点夹回矩形；正常屏幕尺寸下结果保证窗口完整可见。"""
+    left, top, right, bottom = rect
+    max_x = max(left, right - width)
+    max_y = max(top, bottom - height)
+    return min(max(int(x), left), max_x), min(max(int(y), top), max_y)
+
+
+def _monitor_for_window(monitors, x, y, width, height):
+    """优先找完整容纳窗口的显示器，否则返回重叠最多的显示器。"""
+    window = (x, y, x + width, y + height)
+    for monitor in monitors:
+        if _rect_contains(monitor, window):
+            return monitor
+
+    def score(monitor):
+        overlap_w = max(0, min(window[2], monitor[2]) - max(window[0], monitor[0]))
+        overlap_h = max(0, min(window[3], monitor[3]) - max(window[1], monitor[1]))
+        overlap = overlap_w * overlap_h
+        center_distance = abs((window[0] + window[2]) - (monitor[0] + monitor[2]))
+        return overlap, -center_distance
+
+    return max(monitors, key=score, default=None)
+
+
+def _adjacent_monitor(monitors, current, direction, y, height):
+    """找同一水平行上、方向相邻的显示器，允许显示器之间存在 gap。"""
+    if current is None:
+        return None
+    vertical_overlap = lambda monitor: monitor[3] > y and monitor[1] < y + height
+    candidates = []
+    for monitor in monitors:
+        if monitor == current or not vertical_overlap(monitor):
+            continue
+        if direction > 0 and monitor[2] > current[2]:
+            gap = max(0, monitor[0] - current[2])
+            candidates.append((gap, abs(monitor[1] - y), monitor))
+        elif direction < 0 and monitor[0] < current[0]:
+            gap = max(0, current[0] - monitor[2])
+            candidates.append((gap, abs(monitor[1] - y), monitor))
+    return min(candidates, key=lambda item: (item[0], item[1]))[2] if candidates else None
+
+
+def _next_walk_position(monitors, x, y, width, height, direction, step=3):
+    """计算一次自动散步，跨屏时从当前边缘跳到相邻屏幕边缘。"""
+    if not monitors:
+        return x, y, direction, None
+    current = _monitor_for_window(monitors, x, y, width, height)
+    if current is None:
+        return x, y, direction, None
+    x, y = _clamp_window_to_rect(x, y, width, height, current)
+    candidate = (x + direction * step, y,
+                 x + direction * step + width, y + height)
+    if _rect_contains(current, candidate):
+        return candidate[0], candidate[1], direction, current
+
+    target = _adjacent_monitor(monitors, current, direction, y, height)
+    if target is not None:
+        if direction > 0:
+            target_x = max(current[2], target[0])
+        else:
+            target_x = min(current[0] - width, target[2] - width)
+        target_x, target_y = _clamp_window_to_rect(
+            target_x, y, width, height, target
+        )
+        return target_x, target_y, direction, target
+
+    edge_x = current[2] - width if direction > 0 else current[0]
+    edge_x, edge_y = _clamp_window_to_rect(edge_x, y, width, height, current)
+    return edge_x, edge_y, -direction, current
 
 # 只轮询可打印键与常用编辑键，避开控制/鼠标/手柄键
 def _watch_vks():
@@ -470,6 +665,8 @@ class Pet:
         self._was_typing = False
         self._self_after_ids = []
         self._asset_frames = {}
+        self._asset_paths = {}
+        self._body_glow_cache = {}
         self._walk_frame_tick = 0
         self._blinking = False
         self._sleeping = False
@@ -480,6 +677,7 @@ class Pet:
         self._sleep_index = 0
         self._typing_l = self._typing_r = 0
         self.keys_held = frozenset()
+        self._key_glow_until = {}
         self.typing_until = 0.0
         self.typing_lock_until = 0.0
         self._kb_enabled = True
@@ -511,9 +709,9 @@ class Pet:
         self._build_menu()
 
         if spawn_x is None:
-            _, _, vx1, vy1 = self.screen_bounds()
-            spawn_x = vx1 - self._stage_w - 60
-            spawn_y = vy1 - self._stage_h - 90
+            work_area = _get_primary_work_area(self.win)
+            spawn_x, spawn_y = _initial_position(
+                work_area, self._stage_w, self._stage_h)
         self.win.geometry(f"{self._stage_w}x{self._stage_h}+{spawn_x}+{spawn_y}")
         self.face("front")
 
@@ -523,7 +721,7 @@ class Pet:
         if self.auto:
             self._auto_id = self.win.after(AUTO_MS, self._auto_tick)
         self._idle_id = self.win.after(300, self._idle_tick)
-        self._key_id = self.win.after(140, self._key_tick)
+        self._key_id = self.win.after(KEY_POLL_MS, self._key_tick)
 
     # ---------- 素材与舞台 ----------
     def _load_assets(self):
@@ -544,6 +742,7 @@ class Pet:
                         continue
                     raise SystemExit(f"缺少素材: {p}")
                 self.imgs[key] = tk.PhotoImage(file=p)
+                self._asset_paths[key] = p
                 frames.append(key)
             self._asset_frames[role] = frames
 
@@ -558,8 +757,14 @@ class Pet:
 
         # 键位表：vK -> 键帽矩形/中心，用于精确点亮与左右手分工
         km = os.path.join(ASSETS, "keys_map.json")
-        keys = json.load(open(km, encoding="utf-8")) if (
-            not SELF_CONTAINED and os.path.exists(km)) else []
+        try:
+            if os.path.exists(km):
+                with open(km, encoding="utf-8") as f:
+                    keys = json.load(f)
+            else:
+                keys = []
+        except (OSError, ValueError, TypeError):
+            keys = []
         self._key_rects = keys
         self._keys_by_vk = {k["vk"]: k for k in keys if k.get("vk") is not None}
         self._blink_frames = self._asset_frames.get("blink", [])
@@ -570,6 +775,7 @@ class Pet:
         s = self.scale
         self.scaled = {k: (img.subsample(s) if s > 1 else img)
                        for k, img in self.imgs.items()}
+        self._body_glow_cache.clear()
 
     def _build_stage(self):
         """统一色键底：键盘与手在后景，她压在前景。
@@ -655,14 +861,57 @@ class Pet:
         else:
             self.menu.add_command(label="✕ 让她消失", command=self.close_self)
 
+    def _active_glow_vks(self):
+        now = time.time()
+        active = {vk for vk, until in self._key_glow_until.items()
+                  if until > now or vk in self.keys_held}
+        self._key_glow_until = {
+            vk: until for vk, until in self._key_glow_until.items()
+            if until > now or vk in self.keys_held
+        }
+        return active
+
+    def _body_image(self, key, pressed_vks=()):
+        """返回正面整图或带内嵌键盘高亮的正面整图。"""
+        if (not SELF_CONTAINED or key not in ("front", "front_typing")
+                or not pressed_vks or not self._key_rects):
+            return self.scaled[key]
+        cache_key = (key, tuple(sorted(pressed_vks)), self.scale)
+        cached = self._body_glow_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        path = self._asset_paths.get(key)
+        if not path:
+            return self.scaled[key]
+        with open(path, "rb") as f:
+            width, height, rgba = pngtool.decode(f.read())
+        stage_origin_x = (self._stage_w - width) // 2
+        rgba = _draw_embedded_key_glow(
+            rgba, width, height, stage_origin_x,
+            EMBEDDED_KEYBOARD_BBOX, self._key_rects, pressed_vks,
+        )
+        image = tk.PhotoImage(data=pngtool.encode(width, height, rgba))
+        if self.scale > 1:
+            image = image.subsample(self.scale)
+        if len(self._body_glow_cache) > 40:
+            self._body_glow_cache.clear()
+        self._body_glow_cache[cache_key] = image
+        return image
+
+    def _set_body_image(self, key, pressed_vks=()):
+        self.body_lbl.config(image=self._body_image(key, pressed_vks))
+
     def face(self, key):
         if not _win_alive(self.win):
             return
         self._shown_walk = None
         self._shown_walk_frame = None
         self._shown_frame = key
+        self._shown_glow_vks = set()
         self.pose = key
-        self.body_lbl.config(image=self.scaled[key])
+        glow = self._active_glow_vks() if key in ("front", "front_typing") else ()
+        self._shown_glow_vks = set(glow)
+        self._set_body_image(key, glow)
         front = key == "front"
         self.win.update_idletasks()
         if front:
@@ -702,12 +951,14 @@ class Pet:
         if held is not None and held != self.keys_held:
             new = held - self.keys_held
             self.keys_held = held
+            now = time.time()
             if new:
                 self._interrupt_walk()   # 打字打断散步，固定在打字姿势
             for vk in new:
                 self.mark_active()
-                self.typing_until = time.time() + TYPING_HOLD
-                self.typing_lock_until = time.time() + TYPING_LOCK
+                self._key_glow_until[vk] = now + KEY_GLOW_HOLD
+                self.typing_until = now + TYPING_HOLD
+                self.typing_lock_until = now + TYPING_LOCK
                 # 按键盘左右分区决定哪只手敲：以空格键中心为界
                 if not SELF_CONTAINED:
                     cx = self._split_x()
@@ -718,33 +969,33 @@ class Pet:
                         else:
                             self._typing_r = 1
         if self._sleeping or self._blinking:
-            self._key_id = self.win.after(120, self._key_tick)
+            self._key_id = self.win.after(KEY_POLL_MS, self._key_tick)
             return
-        typing = time.time() < self.typing_until and bool(self.keys_held)
+        glow_vks = self._active_glow_vks()
+        typing = ((time.time() < self.typing_until and bool(self.keys_held))
+                  or bool(glow_vks))
         if self.pose != "front":
             self._was_typing = typing
-            self._key_id = self.win.after(120, self._key_tick)
+            self._key_id = self.win.after(KEY_POLL_MS, self._key_tick)
             return
         if not typing and self.typing_now():
             # 打字间隙：保持"手落在键盘上"的待命姿势（SELF_CONTAINED 用 front 帧）
             if SELF_CONTAINED and getattr(self, "_shown_frame", None) != "front":
                 self._shown_frame = "front"
-                self.body_lbl.config(image=self.scaled["front"])
+                self._set_body_image("front", glow_vks)
             self._was_typing = False
-            self._key_id = self.win.after(120, self._key_tick)
+            self._key_id = self.win.after(KEY_POLL_MS, self._key_tick)
             return
         if SELF_CONTAINED:
-            # 立绘自带键盘与双手：只需在"手落 / 手抬"两帧间切换
+            # 立绘自带键盘与双手：整图切换，同时叠加内嵌按键高亮。
             want = "front_typing" if typing else "front"
-            if getattr(self, "_shown_frame", None) != want:
+            if (getattr(self, "_shown_frame", None) != want
+                    or glow_vks != getattr(self, "_shown_glow_vks", set())):
                 self._shown_frame = want
-                self.body_lbl.config(image=self.scaled[want])
-                try:
-                    pass  # debug log removed
-                except Exception:
-                    pass
+                self._shown_glow_vks = set(glow_vks)
+                self._set_body_image(want, glow_vks)
             self._was_typing = typing
-            self._key_id = self.win.after(120, self._key_tick)
+            self._key_id = self.win.after(KEY_POLL_MS, self._key_tick)
             return
         if typing:
             pressed = self._pressed_vks()
@@ -761,7 +1012,7 @@ class Pet:
                 lbl.config(image=self.scaled["hand"])
                 lbl.place_configure(y=self._paw_y + hh // 2)
         self._was_typing = typing
-        self._key_id = self.win.after(120, self._key_tick)
+        self._key_id = self.win.after(KEY_POLL_MS, self._key_tick)
 
     def _split_x(self):
         """左右手分界：空格键中心（键盘水平中心偏左一点）。"""
@@ -1020,13 +1271,15 @@ class Pet:
             if self.pose != "front":
                 self.face("front")
             return
-        x = self.win.winfo_x() + self.dir * 3
-        vx0, _, vx1, _ = self.screen_bounds()
-        if x < vx0 or x > vx1 - self.win.winfo_width():
-            self.dir *= -1
+        x, y, self.dir, _monitor = _next_walk_position(
+            _get_monitor_work_areas(self.win),
+            self.win.winfo_x(), self.win.winfo_y(),
+            self.win.winfo_width(), self.win.winfo_height(), self.dir,
+        )
+        self.win.geometry(f"+{x}+{y}")
+        if self.dir != getattr(self, "_last_walk_dir", self.dir):
             self.face("side_r" if self.dir > 0 else "side_l")
-        else:
-            self.win.geometry(f"+{x}+{self.win.winfo_y()}")
+        self._last_walk_dir = self.dir
         base = "side_r" if self.dir > 0 else "side_l"
         frames = self._asset_frames.get(base) or [base]
         frame = frames[(self._walk_frame_tick // 3) % len(frames)]
