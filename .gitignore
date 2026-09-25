@@ -21,3 +21,6 @@ Thumbs.db
 
 # Historical local-only patch helper
 tools/_patch6.py
+
+# Debug capture output
+debug_capture/
