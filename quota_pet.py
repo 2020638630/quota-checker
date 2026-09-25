@@ -864,6 +864,10 @@ class Pet:
                 work_area, self._stage_w, self._stage_h)
         self.win.geometry(f"{self._stage_w}x{self._stage_h}+{spawn_x}+{spawn_y}")
         self.face("front")
+        # spawned pets are created inside a menu callback (mainloop event),
+        # so the window is already mapped when -transparentcolor was set;
+        # re-apply after mapping to avoid a white box.
+        self.win.attributes("-transparentcolor", KEY)
 
         self.win.after(600, lambda: self.refresh(force=False, quiet=True))
         self._bob_id = self.win.after(900, self._bob)
