@@ -24,3 +24,15 @@ tools/_patch6.py
 
 # Debug capture output
 debug_capture/
+
+# Artwork redesign working files (not source of truth)
+art_refs/
+source/failed_*.png
+source/walk_strip_*.png
+source/walk_right_preview.png
+source/contact_compare.png
+source/cuff_*.png
+source/f0_f2_compare_v12.png
+source/metrics.json
+source/*_backup/
+source/qualified_move_sheets_for_codex*/
