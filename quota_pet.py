@@ -51,8 +51,8 @@ MOVE_STYLE_ROLES = {
 }
 MOVE_ANIMATION_ROLES = {role for roles in MOVE_STYLE_ROLES.values() for role in roles}
 OPTIONAL_MOVE_ROLES = MOVE_ANIMATION_ROLES - {"side_l", "side_r"}
-MOVE_STEP_PIXELS = {"walk": 3, "run": 6, "ride": 3, "duo": 4}
-MOVE_FRAME_HOLD_TICKS = {"walk": 3, "run": 2, "ride": 3, "duo": 2}
+MOVE_STEP_PIXELS = {"walk": 2, "run": 4, "ride": 2, "duo": 3}
+MOVE_FRAME_HOLD_TICKS = {"walk": 5, "run": 4, "ride": 4, "duo": 4}
 MOVE_TICK_MS = 40
 GIF_DEBUG_BACKGROUND = (238, 238, 242)
 WARN_BELOW = 10.0        # 余额告警阈值
