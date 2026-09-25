@@ -75,6 +75,11 @@ KEYBOARD_MAP_SIZE = (150.0, 58.0)
 KEY_GLOW_RGB = (86, 232, 255)
 INITIAL_MARGIN = 20           # 首次出生点距主屏工作区右下角的安全边距
 
+# Shared foot baseline pad (walk target canvas 215x264, feet at y=261).
+# Layout-only alignment: do not resize/patch pet_assets pixels.
+FOOT_PAD_PX = 3
+CONTENT_ALPHA_MIN = 16
+
 
 def _get_primary_work_area(widget):
     """返回 Windows 主显示器工作区；失败时回退到 Tk 主屏尺寸。"""
@@ -395,6 +400,48 @@ def _export_animation_gif(style, direction, frame_keys, asset_paths,
         optimize=False,
     )
     return path
+
+
+
+def _opaque_content_bbox(rgba, width, height, alpha_min=CONTENT_ALPHA_MIN,
+                         colorkey=(255, 0, 254)):
+    """Inclusive bbox of visible pixels (non-transparent, non-colorkey)."""
+    minx, miny, maxx, maxy = width, height, -1, -1
+    for y in range(height):
+        row = y * width * 4
+        for x in range(width):
+            i = row + x * 4
+            red, green, blue, alpha = rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]
+            if alpha < alpha_min:
+                continue
+            if (red, green, blue) == colorkey:
+                continue
+            if x < minx:
+                minx = x
+            if y < miny:
+                miny = y
+            if x > maxx:
+                maxx = x
+            if y > maxy:
+                maxy = y
+    if maxx < 0:
+        return 0, 0, max(0, width - 1), max(0, height - 1)
+    return minx, miny, maxx, maxy
+
+
+def _frame_anchor_from_png(path):
+    """Native-pixel foot y (content bottom) and horizontal content center."""
+    with open(path, "rb") as f:
+        width, height, rgba = pngtool.decode(f.read())
+    left, _top, right, bottom = _opaque_content_bbox(rgba, width, height)
+    return {
+        "foot_y": bottom,
+        "center_x": (left + right) / 2.0,
+        "left": left,
+        "right": right,
+        "width": width,
+        "height": height,
+    }
 
 
 def _asset_key(role, index):
@@ -763,6 +810,7 @@ class Pet:
         self._self_after_ids = []
         self._asset_frames = {}
         self._asset_paths = {}
+        self._frame_anchors = {}  # key -> foot_y/center_x at current scale
         self._body_glow_cache = {}
         self._walk_frame_tick = 0
         self._blinking = False
@@ -878,6 +926,62 @@ class Pet:
         self.scaled = {k: (img.subsample(s) if s > 1 else img)
                        for k, img in self.imgs.items()}
         self._body_glow_cache.clear()
+        self._rebuild_frame_anchors()
+
+    def _rebuild_frame_anchors(self):
+        """Cache per-frame foot/center anchors, scaled like PhotoImage.subsample."""
+        s = max(1, int(self.scale))
+        anchors = {}
+        for key, path in self._asset_paths.items():
+            try:
+                native = _frame_anchor_from_png(path)
+            except Exception:
+                img = self.imgs.get(key)
+                if img is None:
+                    continue
+                native = {
+                    "foot_y": img.height() - 1,
+                    "center_x": img.width() / 2.0,
+                    "left": 0,
+                    "right": img.width() - 1,
+                    "width": img.width(),
+                    "height": img.height(),
+                }
+            left = native["left"] // s
+            right = native["right"] // s
+            anchors[key] = {
+                "foot_y": native["foot_y"] // s,
+                "center_x": (left + right) / 2.0,
+                "width": native["width"] // s,
+                "height": native["height"] // s,
+            }
+        self._frame_anchors = anchors
+
+    def _foot_baseline(self):
+        """Shared stage Y where content feet sit (walk target: y=261 on h=264)."""
+        s = max(1, int(self.scale))
+        return (self._stage_h * s - FOOT_PAD_PX) // s
+
+    def _current_body_key(self):
+        return (getattr(self, "_shown_walk_frame", None)
+                or getattr(self, "_shown_frame", None)
+                or "front")
+
+    def _place_body(self, key=None, bob=0):
+        """Offset body so feet share a baseline and content center stays mid-stage."""
+        if not hasattr(self, "body_lbl"):
+            return
+        key = key or self._current_body_key()
+        img = self.scaled.get(key)
+        if img is None:
+            return
+        anchor = self._frame_anchors.get(key)
+        if anchor is None:
+            dx, dy = 0, int(bob)
+        else:
+            dy = self._foot_baseline() - anchor["foot_y"] + int(bob)
+            dx = int(round(img.width() / 2.0 - anchor["center_x"]))
+        self.body_lbl.place(relx=0.5, rely=0, anchor="n", x=dx, y=dy)
 
     def _build_stage(self):
         """统一色键底：键盘与手在后景，她压在前景。
@@ -902,14 +1006,14 @@ class Pet:
         否则键盘会被她挡住只剩一条边（这正是之前的 bug）。
         """
         if SELF_CONTAINED:
-            self.body_lbl.place(relx=0.5, rely=0, anchor="n", y=0)
+            self._place_body(self._current_body_key())
             for w in (self.kb_lbl, self.arm_l_lbl, self.arm_r_lbl,
                       self.hand_l, self.hand_r):
                 w.place_forget()
             self.body_lbl.lift()
             return
         kbw = self.scaled["keyboard"].width()
-        self.body_lbl.place(relx=0.5, rely=0, anchor="n", y=0)
+        self._place_body(self._current_body_key())
         self.kb_lbl.place(relx=0.5, rely=0, anchor="n", y=self._kb_y)
         # 手落在键帽上：左手管键盘左半，右手管右半（对齐真实打字指区）
         paw_y = self._kb_y + int(self.scaled["keyboard"].height() * 0.30)
@@ -1027,8 +1131,9 @@ class Pet:
         self._body_glow_cache[cache_key] = image
         return image
 
-    def _set_body_image(self, key, pressed_vks=()):
+    def _set_body_image(self, key, pressed_vks=(), bob=0):
         self.body_lbl.config(image=self._body_image(key, pressed_vks))
+        self._place_body(key, bob=bob)
 
     def face(self, key):
         if not _win_alive(self.win):
@@ -1070,6 +1175,7 @@ class Pet:
                           - int(self.scaled["keyboard"].height() * 0.42))
             self._stage_h = self._kb_y + self.scaled["keyboard"].height()
         self.win.geometry(f"{self._stage_w}x{self._stage_h}")
+        self._place_body(self._current_body_key())
 
     # ---------- 键盘互动 ----------
     def _key_tick(self):
@@ -1229,7 +1335,10 @@ class Pet:
         self._blinking = True
         self._blink_pose = self.pose
         self._blink_index = 0
-        self.body_lbl.config(image=self.scaled[self._blink_frames[0]])
+        frame = self._blink_frames[0]
+        self._shown_frame = frame
+        self.body_lbl.config(image=self.scaled[frame])
+        self._place_body(frame)
         self._blink_after_id = self.win.after(BLINK_FRAME_MS, self._blink_tick)
 
     def _blink_tick(self):
@@ -1241,7 +1350,10 @@ class Pet:
             self.face(self._blink_pose)
             return
         self._blink_index = next_index
-        self.body_lbl.config(image=self.scaled[self._blink_frames[next_index]])
+        frame = self._blink_frames[next_index]
+        self._shown_frame = frame
+        self.body_lbl.config(image=self.scaled[frame])
+        self._place_body(frame)
         self._blink_after_id = self.win.after(BLINK_FRAME_MS, self._blink_tick)
 
     def _enter_sleep(self):
@@ -1255,14 +1367,20 @@ class Pet:
             self.face("front")
         self._sleeping = True
         self._sleep_index = 0
-        self.body_lbl.config(image=self.scaled[self._sleep_frames[0]])
+        frame = self._sleep_frames[0]
+        self._shown_frame = frame
+        self.body_lbl.config(image=self.scaled[frame])
+        self._place_body(frame)
         self._sleep_after_id = self.win.after(SLEEP_FRAME_MS, self._sleep_tick)
 
     def _sleep_tick(self):
         if not _win_alive(self.win) or not self._sleeping:
             return
         self._sleep_index = (self._sleep_index + 1) % len(self._sleep_frames)
-        self.body_lbl.config(image=self.scaled[self._sleep_frames[self._sleep_index]])
+        frame = self._sleep_frames[self._sleep_index]
+        self._shown_frame = frame
+        self.body_lbl.config(image=self.scaled[frame])
+        self._place_body(frame)
         self._sleep_after_id = self.win.after(SLEEP_FRAME_MS, self._sleep_tick)
 
     def _idle_tick(self):
@@ -1384,7 +1502,7 @@ class Pet:
         if (not self.walking and not self.dragging and not self._blinking
                 and not self._sleeping and self.pose == "front"):
             dy = 1 if (int(time.time() * 2) % 2) else 0
-            self.body_lbl.place_configure(y=dy)
+            self._place_body(self._current_body_key(), bob=dy)
         self._bob_id = self.win.after(700, self._bob)
 
     def _maybe_walk(self):
@@ -1445,11 +1563,11 @@ class Pet:
         )
         frame = frames[(self._walk_frame_tick // hold_ticks) % len(frames)]
         self._walk_frame_tick += 1
+        bob = 1 if (left // 4) % 2 == 0 else 0
         if getattr(self, "_shown_walk_frame", None) != frame:
             self._shown_walk_frame = frame
             self.body_lbl.config(image=self.scaled[frame])
-        bob = 1 if (left // 4) % 2 == 0 else 0
-        self.body_lbl.place_configure(y=bob)
+        self._place_body(frame, bob=bob)
         self.win.after(MOVE_TICK_MS, lambda: self._walk_step(left - 1))
 
     def _debug_cancel_timer(self):
@@ -1538,6 +1656,7 @@ class Pet:
         self._shown_walk_frame = frame_key
         self._shown_frame = frame_key
         self.body_lbl.config(image=self.scaled[frame_key])
+        self._place_body(frame_key)
 
     def _debug_tick(self):
         self._debug_after_id = None
