@@ -30,13 +30,31 @@ MANIFEST_FILE = os.path.join(ASSETS, "manifest.json")
 ASSET_DEFAULTS = {
     "front": ["front.png"],
     "front_typing": ["front_typing.png"],
-    "side_l": ["side_l.png", "side_l_1.png"],
-    "side_r": ["side_r.png", "side_r_1.png"],
+    "side_l": ["side_l.png", "side_l_1.png", "side_l_2.png", "side_l_3.png"],
+    "side_r": ["side_r.png", "side_r_1.png", "side_r_2.png", "side_r_3.png"],
+    "run_l": ["run_l.png", "run_l_1.png", "run_l_2.png", "run_l_3.png"],
+    "run_r": ["run_r.png", "run_r_1.png", "run_r_2.png", "run_r_3.png"],
+    "ride_l": ["ride_l.png", "ride_l_1.png", "ride_l_2.png", "ride_l_3.png"],
+    "ride_r": ["ride_r.png", "ride_r_1.png", "ride_r_2.png", "ride_r_3.png"],
+    "duo_l": ["duo_l.png", "duo_l_1.png", "duo_l_2.png", "duo_l_3.png"],
+    "duo_r": ["duo_r.png", "duo_r_1.png", "duo_r_2.png", "duo_r_3.png"],
     "back": ["back.png"],
     "blink": ["blink_1.png", "blink_2.png"],
     "sleep": ["sleep_1.png", "sleep_2.png"],
 }
 SINGLE_ASSET_ROLES = {"front", "front_typing", "back"}
+MOVE_STYLE_ROLES = {
+    "walk": ("side_l", "side_r"),
+    "run": ("run_l", "run_r"),
+    "ride": ("ride_l", "ride_r"),
+    "duo": ("duo_l", "duo_r"),
+}
+MOVE_ANIMATION_ROLES = {role for roles in MOVE_STYLE_ROLES.values() for role in roles}
+OPTIONAL_MOVE_ROLES = MOVE_ANIMATION_ROLES - {"side_l", "side_r"}
+MOVE_STEP_PIXELS = {"walk": 3, "run": 6, "ride": 3, "duo": 4}
+MOVE_FRAME_HOLD_TICKS = {"walk": 3, "run": 2, "ride": 3, "duo": 2}
+MOVE_TICK_MS = 40
+GIF_DEBUG_BACKGROUND = (238, 238, 242)
 WARN_BELOW = 10.0        # 余额告警阈值
 AUTO_MS = 10 * 60 * 1000
 BUBBLE_MS = 8000
@@ -308,11 +326,82 @@ def _manifest_files(manifest, role):
     return files
 
 
+def _normalize_move_style(value):
+    """Return a supported movement style; unknown or malformed values use walk."""
+    return value if isinstance(value, str) and value in MOVE_STYLE_ROLES else "walk"
+
+
+def _export_animation_gif(style, direction, frame_keys, asset_paths,
+                          duration_ms, output_dir=None):
+    """Export the existing runtime PNG sequence over a neutral debug background."""
+    from PIL import Image
+
+    if style not in MOVE_STYLE_ROLES or direction not in ("left", "right"):
+        raise ValueError("unsupported animation selection")
+    if not frame_keys:
+        raise ValueError("animation has no runtime frames")
+
+    output_dir = output_dir or os.path.join(HERE, "debug_capture")
+    os.makedirs(output_dir, exist_ok=True)
+    frames = []
+    expected_size = None
+    for key in frame_keys:
+        path = asset_paths.get(key)
+        if not path or not os.path.isfile(path):
+            raise FileNotFoundError(path or key)
+        with Image.open(path) as opened:
+            rgba = opened.convert("RGBA")
+        image = Image.new("RGB", rgba.size, GIF_DEBUG_BACKGROUND)
+        source_pixels = rgba.getdata()
+        output_pixels = []
+        for red, green, blue, alpha in source_pixels:
+            if (alpha < 128 or (red, green, blue) == (255, 0, 254)):
+                output_pixels.append(GIF_DEBUG_BACKGROUND)
+            elif alpha == 255:
+                output_pixels.append((red, green, blue))
+            else:
+                output_pixels.append(tuple(
+                    (channel * alpha + background * (255 - alpha) + 127) // 255
+                    for channel, background in zip(
+                        (red, green, blue), GIF_DEBUG_BACKGROUND)
+                ))
+        image.putdata(output_pixels)
+        if expected_size is None:
+            expected_size = image.size
+        elif image.size != expected_size:
+            raise ValueError("runtime animation frames have inconsistent dimensions")
+        pixels = list(image.getdata())
+        image.putdata([
+            GIF_DEBUG_BACKGROUND if pixel == (255, 0, 254) else pixel
+            for pixel in pixels
+        ])
+        frames.append(image)
+
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    stem = f"{style}_{direction}_{timestamp}"
+    path = os.path.join(output_dir, stem + ".gif")
+    suffix = 1
+    while os.path.exists(path):
+        path = os.path.join(output_dir, f"{stem}_{suffix}.gif")
+        suffix += 1
+    frames[0].save(
+        path,
+        format="GIF",
+        save_all=True,
+        append_images=frames[1:],
+        duration=int(duration_ms),
+        loop=0,
+        disposal=2,
+        optimize=False,
+    )
+    return path
+
+
 def _asset_key(role, index):
     """把 manifest 中的动作帧映射到兼容现有代码的素材 key。"""
     if role in SINGLE_ASSET_ROLES:
         return role
-    if role in ("side_l", "side_r"):
+    if role in MOVE_ANIMATION_ROLES:
         return role if index == 0 else f"{role}_{index}"
     return f"{role}_{index + 1}"
 
@@ -655,9 +744,17 @@ class Pet:
         self.auto = anchor is None
         # 自动增殖开关：从 ui.json 读，默认关闭
         # 开关值所有实例共享（菜单显示一致）；但只有本体真正执行自动增殖
-        self.auto_spawn = bool(_load_ui().get("auto_spawn", AUTO_SPAWN_DEFAULT))
+        ui = _load_ui()
+        self.auto_spawn = bool(ui.get("auto_spawn", AUTO_SPAWN_DEFAULT))
+        self.move_style = _normalize_move_style(ui.get("move_style", "walk"))
         self.scale = 2 if small else 1       # 1=原尺寸 2=半尺寸
         self.walking = False
+        self.debug_animation_enabled = False
+        self.debug_move_style = None
+        self.debug_direction = -1
+        self.debug_paused = False
+        self.debug_frame_index = 0
+        self._debug_after_id = None
         self.dragging = False
         self._drag = None
         self._moved = False
@@ -690,6 +787,11 @@ class Pet:
         self.imgs = {}
         self._lit_cache = {}
         self._load_assets()
+        # Optional movement sets keep older installs compatible.  If either
+        # direction for the requested style is unavailable, use ordinary walk.
+        if not all(self._asset_frames.get(role)
+                   for role in MOVE_STYLE_ROLES[self.move_style]):
+            self.move_style = "walk"
         # 尺寸先算，_build_stage 要用它撑开舞台
         if SELF_CONTAINED:
             self._stage_w = max(im.width() for im in self.scaled.values())
@@ -736,8 +838,8 @@ class Pet:
                 key = _asset_key(role, index)
                 p = os.path.join(ASSETS, filename)
                 if not os.path.exists(p):
-                    # 第二个走路帧以及 blink/sleep 都是可选的。
-                    if role in ("blink", "sleep") or (
+                    # Extra movement styles, later frames, blink and sleep are optional.
+                    if role in ("blink", "sleep") or role in OPTIONAL_MOVE_ROLES or (
                             role in ("side_l", "side_r") and index > 0):
                         continue
                     raise SystemExit(f"缺少素材: {p}")
@@ -860,6 +962,33 @@ class Pet:
             self.menu.add_command(label="✕ 退出全部", command=self.quit_all)
         else:
             self.menu.add_command(label="✕ 让她消失", command=self.close_self)
+
+        debug_menu = tk.Menu(self.menu, tearoff=0)
+        self._debug_mode_var = tk.StringVar(master=self.win, value="normal")
+        self._debug_direction_var = tk.StringVar(master=self.win, value="left")
+        debug_menu.add_radiobutton(
+            label="Normal", variable=self._debug_mode_var, value="normal",
+            command=lambda: self._debug_set_style(None))
+        debug_menu.add_separator()
+        for style in ("walk", "run", "duo", "ride"):
+            debug_menu.add_radiobutton(
+                label=style.title(), variable=self._debug_mode_var, value=style,
+                command=lambda selected=style: self._debug_set_style(selected))
+        debug_menu.add_separator()
+        debug_menu.add_radiobutton(
+            label="Left", variable=self._debug_direction_var, value="left",
+            command=lambda: self._debug_set_direction(-1))
+        debug_menu.add_radiobutton(
+            label="Right", variable=self._debug_direction_var, value="right",
+            command=lambda: self._debug_set_direction(1))
+        debug_menu.add_separator()
+        debug_menu.add_command(label="Pause", command=self._debug_pause)
+        debug_menu.add_command(label="Resume", command=self._debug_resume)
+        debug_menu.add_command(label="Previous Frame", command=lambda: self._debug_step(-1))
+        debug_menu.add_command(label="Next Frame", command=lambda: self._debug_step(1))
+        debug_menu.add_separator()
+        debug_menu.add_command(label="Export Animation GIF", command=self._debug_export_gif)
+        self.menu.add_cascade(label="Animation Debug", menu=debug_menu)
 
     def _active_glow_vks(self):
         now = time.time()
@@ -1039,7 +1168,9 @@ class Pet:
     def _toggle_keyboard(self):
         self._kb_enabled = not self._kb_enabled
         self.menu.entryconfigure(6, label=f"⌨ 键盘互动：{'开' if self._kb_enabled else '关'}")
-        if not self._kb_enabled:
+        if self.debug_animation_enabled:
+            self._debug_render_frame()
+        elif not self._kb_enabled:
             self.face(self.pose)
 
     # ---------- 增殖 ----------
@@ -1049,6 +1180,8 @@ class Pet:
 
     def _interrupt_walk(self):
         """打字打断散步：停下并立刻摆回正面打字姿势。"""
+        if self.debug_animation_enabled:
+            return
         if self.walking or self.pose != "front":
             self.walking = False
             self.face("front")
@@ -1073,6 +1206,10 @@ class Pet:
 
     def _wake(self):
         """交互后退出 blink/sleep，恢复到正面普通姿态。"""
+        if self.debug_animation_enabled:
+            self._cancel_blink()
+            self._cancel_sleep()
+            return
         was_special = self._blinking or self._sleeping
         self._cancel_blink()
         self._cancel_sleep()
@@ -1084,7 +1221,8 @@ class Pet:
         self._wake()
 
     def _start_blink(self):
-        if (not self._blink_frames or self._blinking or self._sleeping
+        if (self.debug_animation_enabled or not self._blink_frames
+                or self._blinking or self._sleeping
                 or self.walking or self.dragging or self.typing_now()
                 or self.pose != "front"):
             return
@@ -1107,7 +1245,8 @@ class Pet:
         self._blink_after_id = self.win.after(BLINK_FRAME_MS, self._blink_tick)
 
     def _enter_sleep(self):
-        if (not self._sleep_frames or self._sleeping or self.dragging
+        if (self.debug_animation_enabled or not self._sleep_frames
+                or self._sleeping or self.dragging
                 or self.typing_now()):
             return
         self._cancel_blink()
@@ -1127,9 +1266,12 @@ class Pet:
         self._sleep_after_id = self.win.after(SLEEP_FRAME_MS, self._sleep_tick)
 
     def _idle_tick(self):
+        """挂机够久 → 复制一个本体出来（只在还有空间时）。"""
         if not _win_alive(self.win):
             return
-        """挂机够久 → 复制一个本体出来（只在还有空间时）。"""
+        if self.debug_animation_enabled:
+            self._idle_id = self.win.after(5000, self._idle_tick)
+            return
         idle = time.time() - self._last_active
         if idle > SLEEP_AFTER_MS / 1000:
             self._enter_sleep()
@@ -1179,7 +1321,7 @@ class Pet:
         self.walking = False
         for aid_attr in ("_bob_id", "_walk_id", "_idle_id", "_key_id",
                          "_auto_id", "_query_id", "_blink_after_id",
-                         "_sleep_after_id"):
+                         "_sleep_after_id", "_debug_after_id"):
             aid = getattr(self, aid_attr, None)
             if aid:
                 try:
@@ -1248,7 +1390,8 @@ class Pet:
     def _maybe_walk(self):
         if not _win_alive(self.win):
             return
-        if (not self.walking and not self.dragging and not self.typing_now()
+        if (not self.debug_animation_enabled and not self.walking
+                and not self.dragging and not self.typing_now()
                 and not self._sleeping and not self._blinking
                 and random.random() < 0.55):
             self._walk_start()
@@ -1258,12 +1401,26 @@ class Pet:
         self.walking = True
         self.dir = random.choice((-1, 1))
         self._walk_frame_tick = 0
-        self.face("side_r" if self.dir > 0 else "side_l")
+        self._last_walk_dir = self.dir
+        self.face(self._move_role(self.dir))
         steps = random.randint(30, 110)
         self._walk_step(steps)
 
+    def _move_role(self, direction):
+        """Select the configured directional animation, falling back to walk."""
+        left_role, right_role = MOVE_STYLE_ROLES.get(
+            self.move_style, MOVE_STYLE_ROLES["walk"]
+        )
+        role = right_role if direction > 0 else left_role
+        if self._asset_frames.get(role):
+            return role
+        return "side_r" if direction > 0 else "side_l"
+
     def _walk_step(self, left):
         if not _win_alive(self.win):
+            return
+        if self.debug_animation_enabled:
+            self.walking = False
             return
         if (not self.walking or self.dragging or left <= 0 or self.typing_now()
                 or self._sleeping or self._blinking):
@@ -1275,21 +1432,169 @@ class Pet:
             _get_monitor_work_areas(self.win),
             self.win.winfo_x(), self.win.winfo_y(),
             self.win.winfo_width(), self.win.winfo_height(), self.dir,
+            step=MOVE_STEP_PIXELS.get(self.move_style, MOVE_STEP_PIXELS["walk"]),
         )
         self.win.geometry(f"+{x}+{y}")
         if self.dir != getattr(self, "_last_walk_dir", self.dir):
-            self.face("side_r" if self.dir > 0 else "side_l")
+            self.face(self._move_role(self.dir))
         self._last_walk_dir = self.dir
-        base = "side_r" if self.dir > 0 else "side_l"
+        base = self._move_role(self.dir)
         frames = self._asset_frames.get(base) or [base]
-        frame = frames[(self._walk_frame_tick // 3) % len(frames)]
+        hold_ticks = MOVE_FRAME_HOLD_TICKS.get(
+            self.move_style, MOVE_FRAME_HOLD_TICKS["walk"]
+        )
+        frame = frames[(self._walk_frame_tick // hold_ticks) % len(frames)]
         self._walk_frame_tick += 1
         if getattr(self, "_shown_walk_frame", None) != frame:
             self._shown_walk_frame = frame
             self.body_lbl.config(image=self.scaled[frame])
         bob = 1 if (left // 4) % 2 == 0 else 0
         self.body_lbl.place_configure(y=bob)
-        self.win.after(40, lambda: self._walk_step(left - 1))
+        self.win.after(MOVE_TICK_MS, lambda: self._walk_step(left - 1))
+
+    def _debug_cancel_timer(self):
+        aid = self._debug_after_id
+        self._debug_after_id = None
+        if aid:
+            try:
+                self.win.after_cancel(aid)
+            except Exception:
+                pass
+
+    def _debug_interval_ms(self):
+        hold_ticks = MOVE_FRAME_HOLD_TICKS.get(
+            self.debug_move_style, MOVE_FRAME_HOLD_TICKS["walk"]
+        )
+        return MOVE_TICK_MS * hold_ticks
+
+    def _debug_schedule(self):
+        if (self.debug_animation_enabled and not self.debug_paused
+                and _win_alive(self.win) and self._debug_after_id is None):
+            self._debug_after_id = self.win.after(
+                self._debug_interval_ms(), self._debug_tick)
+
+    def _debug_set_style(self, style):
+        if style not in MOVE_STYLE_ROLES and style is not None:
+            raise ValueError(f"unsupported debug animation: {style}")
+        if style is None:
+            self._debug_cancel_timer()
+            self.debug_animation_enabled = False
+            self.debug_move_style = None
+            self.debug_paused = False
+            self.walking = False
+            self._debug_mode_var.set("normal")
+            self._cancel_blink()
+            self._cancel_sleep()
+            self._last_active = time.time()
+            self.face("front")
+            return
+
+        roles = MOVE_STYLE_ROLES[style]
+        if not all(self._asset_frames.get(role) for role in roles):
+            self._debug_mode_var.set(
+                self.debug_move_style if self.debug_animation_enabled else "normal"
+            )
+            self.bubble.show(f"{style} 缺少完整方向帧，无法预览")
+            return
+        was_enabled = self.debug_animation_enabled
+        self._debug_cancel_timer()
+        self.debug_animation_enabled = True
+        self.debug_move_style = style
+        self.debug_paused = self.debug_paused if was_enabled else False
+        self.debug_frame_index = 0
+        self.walking = False
+        self._debug_mode_var.set(style)
+        self._cancel_blink()
+        self._cancel_sleep()
+        self._last_active = time.time()
+        self._debug_render_frame()
+        self._debug_schedule()
+
+    def _debug_set_direction(self, direction):
+        if direction not in (-1, 1):
+            raise ValueError("debug direction must be -1 or 1")
+        self._debug_cancel_timer()
+        self.debug_direction = direction
+        self._debug_direction_var.set("left" if direction < 0 else "right")
+        if self.debug_animation_enabled:
+            self.debug_frame_index = 0
+            self._debug_render_frame()
+            self._debug_schedule()
+
+    def _debug_render_frame(self):
+        if not self.debug_animation_enabled or not _win_alive(self.win):
+            return
+        role = MOVE_STYLE_ROLES[self.debug_move_style][
+            1 if self.debug_direction > 0 else 0
+        ]
+        frames = self._asset_frames.get(role) or []
+        if not frames:
+            return
+        self.debug_frame_index %= len(frames)
+        frame_key = frames[self.debug_frame_index]
+        if self.pose != role:
+            self.face(role)
+        self._shown_walk = None
+        self._shown_walk_frame = frame_key
+        self._shown_frame = frame_key
+        self.body_lbl.config(image=self.scaled[frame_key])
+
+    def _debug_tick(self):
+        self._debug_after_id = None
+        if (not self.debug_animation_enabled or self.debug_paused
+                or not _win_alive(self.win)):
+            return
+        role = MOVE_STYLE_ROLES[self.debug_move_style][
+            1 if self.debug_direction > 0 else 0
+        ]
+        frame_count = len(self._asset_frames.get(role) or ())
+        if frame_count:
+            self.debug_frame_index = (self.debug_frame_index + 1) % frame_count
+            self._debug_render_frame()
+        self._debug_schedule()
+
+    def _debug_pause(self):
+        if not self.debug_animation_enabled:
+            return
+        self.debug_paused = True
+        self._debug_cancel_timer()
+
+    def _debug_resume(self):
+        if not self.debug_animation_enabled:
+            return
+        self.debug_paused = False
+        self._debug_schedule()
+
+    def _debug_step(self, delta):
+        if not self.debug_animation_enabled:
+            return
+        self._debug_pause()
+        role = MOVE_STYLE_ROLES[self.debug_move_style][
+            1 if self.debug_direction > 0 else 0
+        ]
+        frame_count = len(self._asset_frames.get(role) or ())
+        if frame_count:
+            self.debug_frame_index = (self.debug_frame_index + delta) % frame_count
+            self._debug_render_frame()
+
+    def _debug_export_gif(self):
+        if not self.debug_animation_enabled:
+            self.bubble.show("请先选择 Walk、Run、Duo 或 Ride")
+            return
+        role = MOVE_STYLE_ROLES[self.debug_move_style][
+            1 if self.debug_direction > 0 else 0
+        ]
+        frame_keys = list(self._asset_frames.get(role) or ())
+        direction = "right" if self.debug_direction > 0 else "left"
+        try:
+            path = _export_animation_gif(
+                self.debug_move_style, direction, frame_keys, self._asset_paths,
+                self._debug_interval_ms(),
+            )
+        except Exception as exc:
+            self.bubble.show(f"GIF 导出失败：{exc}")
+            return
+        self.bubble.show(f"GIF 已导出：{os.path.relpath(path, HERE)}")
 
     # ---------- 拖拽 / 点击 ----------
     def _press(self, e):
@@ -1303,14 +1608,18 @@ class Pet:
             nx, ny = e.x_root - self._drag[0], e.y_root - self._drag[1]
             if abs(nx - self.win.winfo_x()) + abs(ny - self.win.winfo_y()) > 3:
                 self._moved = True
-                self.face("side_r" if nx > self.win.winfo_x() else "side_l")
+                if not self.debug_animation_enabled:
+                    self.face("side_r" if nx > self.win.winfo_x() else "side_l")
             self.win.geometry(f"+{nx}+{ny}")
             if self.bubble.winfo_viewable():
                 self.bubble.show(self._bubble_text(), self._warn())
 
     def _release(self, e):
         self.dragging = False
-        self.face("front")
+        if self.debug_animation_enabled:
+            self._debug_render_frame()
+        else:
+            self.face("front")
         if not self._moved:      # 单击 = 摸头 → 报余额
             self.speak_balance()
 
@@ -1448,7 +1757,11 @@ class Pet:
     def _toggle_size(self):
         self.scale = 2 if self.scale == 1 else 1
         self._apply_scale()
-        self.face(self.pose)
+        if self.debug_animation_enabled:
+            self.face(self.pose)
+            self._debug_render_frame()
+        else:
+            self.face(self.pose)
 
     def _toggle_top(self):
         self._pinned = not getattr(self, "_pinned", True)

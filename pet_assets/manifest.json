@@ -1,8 +1,14 @@
 {
   "front": "front.png",
   "front_typing": "front_typing.png",
-  "side_l": ["side_l.png", "side_l_1.png"],
-  "side_r": ["side_r.png", "side_r_1.png"],
+  "side_l": ["side_l.png", "side_l_1.png", "side_l_2.png", "side_l_3.png"],
+  "side_r": ["side_r.png", "side_r_1.png", "side_r_2.png", "side_r_3.png"],
+  "run_l": ["run_l.png", "run_l_1.png", "run_l_2.png", "run_l_3.png"],
+  "run_r": ["run_r.png", "run_r_1.png", "run_r_2.png", "run_r_3.png"],
+  "ride_l": ["ride_l.png", "ride_l_1.png", "ride_l_2.png", "ride_l_3.png"],
+  "ride_r": ["ride_r.png", "ride_r_1.png", "ride_r_2.png", "ride_r_3.png"],
+  "duo_l": ["duo_l.png", "duo_l_1.png", "duo_l_2.png", "duo_l_3.png"],
+  "duo_r": ["duo_r.png", "duo_r_1.png", "duo_r_2.png", "duo_r_3.png"],
   "back": "back.png",
   "blink": ["blink_1.png", "blink_2.png"],
   "sleep": ["sleep_1.png", "sleep_2.png"]

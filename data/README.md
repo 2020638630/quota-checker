@@ -14,3 +14,14 @@ python quota.py --init
 
 The desktop pet and widget will use safe defaults until local configuration
 and credentials are provided.
+
+To select the pet's movement animation, add `move_style` to the ignored local
+`ui.json` file. Supported values are `walk`, `run`, `ride`, and `duo`; missing
+or invalid values use `walk`.
+
+```json
+{
+  "auto_spawn": false,
+  "move_style": "walk"
+}
+```

@@ -1,0 +1,145 @@
+{
+  "selection": [
+    {
+      "output": "walk_right_f0.png",
+      "source": "walk_010_t2.0s.png",
+      "label": "2.0s - Contact A candidate"
+    },
+    {
+      "output": "walk_right_f1.png",
+      "source": "walk_012_t2.4s.png",
+      "label": "2.4s - Passing A candidate"
+    },
+    {
+      "output": "walk_right_f2.png",
+      "source": "walk_013_t2.6s.png",
+      "label": "2.6s - Contact B candidate"
+    },
+    {
+      "output": "walk_right_f3.png",
+      "source": "walk_015_t3.0s.png",
+      "label": "3.0s - Passing B candidate"
+    }
+  ],
+  "source_records": [
+    {
+      "output": "walk_right_f0.png",
+      "source": "walk_010_t2.0s.png",
+      "timestamp": 2.0,
+      "corner_mean_rgb": [
+        255,
+        106,
+        165
+      ],
+      "foreground_bbox_xyxy": [
+        128,
+        328,
+        650,
+        1082
+      ],
+      "source_size": [
+        834,
+        1112
+      ]
+    },
+    {
+      "output": "walk_right_f1.png",
+      "source": "walk_012_t2.4s.png",
+      "timestamp": 2.4,
+      "corner_mean_rgb": [
+        254,
+        106,
+        165
+      ],
+      "foreground_bbox_xyxy": [
+        139,
+        324,
+        647,
+        1082
+      ],
+      "source_size": [
+        834,
+        1112
+      ]
+    },
+    {
+      "output": "walk_right_f2.png",
+      "source": "walk_013_t2.6s.png",
+      "timestamp": 2.6,
+      "corner_mean_rgb": [
+        255,
+        106,
+        165
+      ],
+      "foreground_bbox_xyxy": [
+        128,
+        325,
+        650,
+        1082
+      ],
+      "source_size": [
+        834,
+        1112
+      ]
+    },
+    {
+      "output": "walk_right_f3.png",
+      "source": "walk_015_t3.0s.png",
+      "timestamp": 3.0,
+      "corner_mean_rgb": [
+        254,
+        106,
+        165
+      ],
+      "foreground_bbox_xyxy": [
+        145,
+        325,
+        647,
+        1082
+      ],
+      "source_size": [
+        834,
+        1112
+      ]
+    }
+  ],
+  "common_bbox_xyxy": [
+    120,
+    318,
+    658,
+    1082
+  ],
+  "bbox_union_before_padding_xyxy": [
+    128,
+    324,
+    650,
+    1082
+  ],
+  "source_crop_size": [
+    538,
+    764
+  ],
+  "canvas_size": [
+    215,
+    264
+  ],
+  "preserve_aspect_scale": 0.33507853403141363,
+  "resized_character_size": [
+    180,
+    256
+  ],
+  "placement_xy": [
+    17,
+    4
+  ],
+  "background_rgb": [
+    255,
+    0,
+    254
+  ],
+  "resize_filter": "NEAREST",
+  "floor_line_crop_y_exclusive": 1082,
+  "background_corner_distance_threshold_rgb": 90,
+  "corner_floodfill_distance_threshold_rgb": 160,
+  "floodfill_connectivity": 4
+}

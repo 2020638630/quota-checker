@@ -1,0 +1,126 @@
+[
+  {
+    "source": "D:\\PythonProject\\quota-checker\\art_refs\\walk_redesign\\iterations\\seedream_pass3\\frame_0.png",
+    "source_size": [
+      512,
+      768
+    ],
+    "source_subject_bbox": [
+      78,
+      34,
+      512,
+      731
+    ],
+    "touches_source_edge": {
+      "left": false,
+      "top": false,
+      "right": true,
+      "bottom": false
+    },
+    "subject_crop_size": [
+      434,
+      697
+    ],
+    "uniform_scale": 1.21951,
+    "output": "D:\\PythonProject\\quota-checker\\art_refs\\walk_redesign\\iterations\\passing_frames\\assembled\\walk_right_f0.png",
+    "output_canvas": [
+      1024,
+      1024
+    ],
+    "target_visible_height": 850,
+    "baseline_y": 982
+  },
+  {
+    "source": "D:\\PythonProject\\quota-checker\\art_refs\\walk_redesign\\iterations\\passing_frames\\walk_right_f1.png",
+    "source_size": [
+      1024,
+      1280
+    ],
+    "source_subject_bbox": [
+      31,
+      62,
+      848,
+      1250
+    ],
+    "touches_source_edge": {
+      "left": false,
+      "top": false,
+      "right": false,
+      "bottom": false
+    },
+    "subject_crop_size": [
+      817,
+      1188
+    ],
+    "uniform_scale": 0.71549,
+    "output": "D:\\PythonProject\\quota-checker\\art_refs\\walk_redesign\\iterations\\passing_frames\\assembled\\walk_right_f1.png",
+    "output_canvas": [
+      1024,
+      1024
+    ],
+    "target_visible_height": 850,
+    "baseline_y": 982
+  },
+  {
+    "source": "D:\\PythonProject\\quota-checker\\art_refs\\walk_redesign\\iterations\\seedream_pass3\\frame_2.png",
+    "source_size": [
+      512,
+      768
+    ],
+    "source_subject_bbox": [
+      0,
+      35,
+      512,
+      734
+    ],
+    "touches_source_edge": {
+      "left": true,
+      "top": false,
+      "right": true,
+      "bottom": false
+    },
+    "subject_crop_size": [
+      512,
+      699
+    ],
+    "uniform_scale": 1.21602,
+    "output": "D:\\PythonProject\\quota-checker\\art_refs\\walk_redesign\\iterations\\passing_frames\\assembled\\walk_right_f2.png",
+    "output_canvas": [
+      1024,
+      1024
+    ],
+    "target_visible_height": 850,
+    "baseline_y": 982
+  },
+  {
+    "source": "D:\\PythonProject\\quota-checker\\art_refs\\walk_redesign\\iterations\\passing_frames\\walk_right_f3.png",
+    "source_size": [
+      1024,
+      1280
+    ],
+    "source_subject_bbox": [
+      83,
+      58,
+      861,
+      1252
+    ],
+    "touches_source_edge": {
+      "left": false,
+      "top": false,
+      "right": false,
+      "bottom": false
+    },
+    "subject_crop_size": [
+      778,
+      1194
+    ],
+    "uniform_scale": 0.71189,
+    "output": "D:\\PythonProject\\quota-checker\\art_refs\\walk_redesign\\iterations\\passing_frames\\assembled\\walk_right_f3.png",
+    "output_canvas": [
+      1024,
+      1024
+    ],
+    "target_visible_height": 850,
+    "baseline_y": 982
+  }
+]
